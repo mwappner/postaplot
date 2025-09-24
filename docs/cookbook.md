@@ -162,7 +162,7 @@ Useful when you want full control over axes and legends yourself.
 
 ## 11. Separate edge and face colors
 
-This is not natively supported, so you need a workaround. Either plot twice, using seed to make both clouds the same:
+This is not natively supported, so you need a workaround. Either plot twice, using seed to make both clouds the overlap:
 
 ```python
 fig, ax = plt.subplots()

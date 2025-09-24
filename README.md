@@ -39,14 +39,14 @@ plt.show()
 
 * KDE-based jitter → point cloud approximates density.
 * **Discrete or continuous `hue`**
-
   * discrete → legend
   * continuous → colorbar
+  * customizable order, mapping and normalization
 * **Dodge** discrete subgroups into separate sub-clouds.
 * Flexible marker styling:
-
   * aliases: `ms`, `mfc`, `mec`, `mew` work like in `plot()`.
   * `hollow=True` for edge-only markers.
+* Clouds are rasterized if they have too many points (configurable)
 * User-facing API: `kde_scatter`
 * Low-level engine: `kde_scatter_engine` (returns `PathCollection`).
 
@@ -57,11 +57,12 @@ plt.show()
 See the [Cookbook](docs/cookbook.md) for examples:
 
 * Normal vs uniform jitter
-* Discrete vs continuous hue
+* Jitter width control
+* Discrete vs continuous hue and customization
 * Hollow markers (edge-colored by hue)
-* Custom edge vs face colors
 * Dodging multiple groups
 * Colorbars and legends
+* Custom edge vs face colors
 
 ---
 
