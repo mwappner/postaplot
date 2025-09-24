@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: postaplot
+message: If you use this package, please cite it as below.
+authors:
+  - family-names: Wappner
+    given-names: Marcos
+version: 0.1.0
+date-released: 2025-09-24
+doi: ''
