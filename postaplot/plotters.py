@@ -8,8 +8,8 @@ from matplotlib.axes import Axes
 from matplotlib.colors import Normalize
 from matplotlib.collections import Collection
 
-from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_scale, _dodge_offsets
-from .styling import _resolve_hue_mapping, choose_color_plotting_mode, _alias_scatter_kwargs
+from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_scale, _dodge_offsets, _record_drawn
+from .styling import _resolve_hue_mapping, choose_color_plotting_mode, _alias_scatter_kwargs, _set_box_default_and_aliases
 from .legend import add_legend_or_colorbar
 
 def postaplot_engine(
@@ -19,8 +19,8 @@ def postaplot_engine(
     ax: Optional[Axes] = None,
     alpha: float = 0.4,
     rasterized: Optional[bool] = None,
-    width_distr: str = 'normal',
-    orientation: str = 'vertical',
+    width_distr: Literal['normal', 'uniform'] = 'normal',
+    orientation: Literal['vertical', 'horizontal'] = 'vertical',
     rng: Optional[np.random.Generator] = None,
     bw_method: Optional[Union[str, float, Callable]] = None,
     **plot_kw,
@@ -140,7 +140,85 @@ def postaplot_engine(
     )
     return collection
 
+def plot_box(
+    draw_box: bool,
+    loc: Union[float, int, np.integer, np.floating],
+    series: Union[Sequence, np.ndarray, pd.Series],
+    ax: Optional[Axes] = None,
+    orientation: Literal['vertical', 'horizontal'] = 'vertical',
+    **box_kwa,
+) -> Optional[dict]:
+    """
+    Draw a boxplot at location loc for the data in series.
+
+    box_kwa are passed to matplotlib.pyplot.boxplot, but also include:
+        - lw/linewidth: line width of boxplot lines (default 1.0)
+        - lc/linecolor/color: line color of boxplot lines (default 'k')
+    which are applied to all lines in the boxplot, unless overridden by
+    boxprops, medianprops, whiskerprops or capprops in box_kwa. Default
+    values different from matplotlib.pyplot.boxplot defaults are:
+        - showfliers=False
+        - manage_ticks=False
+        - widths=0.2
+        - patch_artist=True
+        - boxprops = dict(facecolor=(0,0,0,0))
+
+    Parameters
+    ----------
+    loc : float
+        Horizontal coordinate around which the boxplot will be drawn.
+    series : array-like
+        Data to generate the boxplot.
+    scale : float or None, optional
+        Decides how wide the boxplot should be. Assuming this function 
+        will be called multiple times and that the values of i will be 
+        increasing integers each time, 0.1 is a good value to generate decently
+        sized boxes with good spacing between neighboring boxes. The default is None.
+    ax : matplotlib Axes or None, optional
+        Axes onto which to plot the boxplot. If ax is None, the current 
+        active axis is selected. This does not open a figure if none is open,
+        so you will have to do that yourself. The default is None.
+    orientation : 'horizontal' or 'vertical', optional
+        Decides if the boxplot extends horizontally or vertically, similar
+        to the `vert` argument in matplotlib.pyplot.boxplot. Default is
+        'vertical'.
+    **box_kwa :
+        Other keyword arguments to be passed to the matplotlib.pyplot.boxplot function.
     
+    Returns
+    -------
+    dict or None
+        The dictionary of matplotlib artists created by matplotlib.pyplot.boxplot.
+        If draw_box is False, None is returned.
+    """
+    if not draw_box:
+        return None
+    
+    if ax is None:
+        ax = plt.gca()
+
+    # default args
+    lw = box_kwa.pop('lw', box_kwa.pop('linewidth', 1.0))
+    lc = box_kwa.pop('color', box_kwa.pop('linecolor', box_kwa.pop('lc', 'k')))
+
+    # default artist properties
+    default_props = dict(
+        showfliers=False,
+        manage_ticks=False,
+        widths=0.2,
+        patch_artist=True,
+        boxprops = dict(facecolor=(0,0,0,0))
+    )
+
+    # update with user properties
+    box_kwa = _set_box_default_and_aliases(box_kwa, default_props, lc, lw)
+
+    # create the boxplot
+    box = ax.boxplot([series], positions=[loc], # type: ignore
+                     orientation=orientation, **box_kwa)
+
+    return box
+
 def postaplot_columns(data, scale=None, ax=None, alpha=0.4, rasterized=None, orientation='vertical', **kw):
     """
     A set of measurements using the postaplot method. Data should be either 
@@ -167,7 +245,7 @@ def postaplot_columns(data, scale=None, ax=None, alpha=0.4, rasterized=None, ori
         ax = plt.gca()
     
     for i, x in enumerate(values):
-        postaplot_engine(i, x, scale, ax, alpha, rasterized, orientation, **kw)
+        postaplot_engine(i, x, scale, ax, alpha, rasterized, orientation, **kw) # type: ignore
         
     if names is not None:
         positions = list(range(len(values)))
@@ -198,6 +276,8 @@ def postaplot(
     alpha: float = 0.4, # it's here to set a default in a visible place
     hollow: bool = False,
     reference: Union[bool, Literal['legend','colorbar','auto']] = 'auto',  # True/'auto'/'legend'/'colorbar'/False
+    box: bool = False,
+    box_kwa: dict = {},
     **plot_kwa,
 ):
     """
@@ -248,6 +328,11 @@ def postaplot(
     reference : bool or {'legend','colorbar','auto'}, default 'auto'
         If 'auto', choose legend or colorbar based on hue type. If False,
         do not add either. If True, use 'auto'.
+    box : bool, default False
+        If True, overlay a boxplot on each category (or category/hue group).
+    box_kwa : dict, optional
+        Passed to `draw_box` to control boxplot appearance. By default, sets
+        empty box face and black lines. See `draw_box` docstring.
     **plot_kw :
         Passed to the underlying matplotlib plotting call (e.g., marker=".",
         markersize=..., linewidth=..., etc.).
@@ -308,12 +393,17 @@ def postaplot(
     # Random generator
     rng = np.random.default_rng(seed)
 
-    # Loop categories (and hues) → call engine
-    drawn_any = False
-    collections = []
+    # prepare arguments
     kde_kwa = dict(scale=horizontal_scale, ax=ax, alpha=alpha,
                 rasterized=rasterized, hollow=hollow, width_distr=width_distr,
                 orientation=orientation, rng=rng, bw_method=bw_method)
+    
+    box_kwa = dict(ax=ax, orientation=orientation, **box_kwa)
+
+    # Loop categories (and hues) → call engine
+    drawn_any = False
+    clouds, boxes = [], []
+
     for c in cats_unique:
         pos = cat_to_pos[c]
         m_cat = (cat == c)
@@ -328,11 +418,8 @@ def postaplot(
             # plot
             cloud = postaplot_engine(loc=pos, series=val[m_cat],
                                         **kde_kwa, **color_kw, **plot_kwa)
-
-            # record
-            if cloud is not None: 
-                collections.append(cloud)
-            drawn_any = True
+            box_dict = plot_box(draw_box=box, loc=pos, series=val[m_cat], **box_kwa)
+            drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
             continue # to avoid nesting below
 
         if not dodge:
@@ -348,8 +435,8 @@ def postaplot(
             # plot with per-point colors
             cloud = postaplot_engine(loc=pos, series=val[m_cat],
                                         **kde_kwa, color=colors, **plot_kwa)
-            if cloud is not None: collections.append(cloud)
-            drawn_any = True
+            box_dict = plot_box(draw_box=box, loc=pos, series=val[m_cat], **box_kwa)
+            drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
 
         else:
             # dodge=True → only sensible for discrete hue
@@ -358,11 +445,8 @@ def postaplot(
                 colors = cmap(norm(hue_vals[m_cat])) # type: ignore (norm and cmap never None when is_continuous_hue)
                 cloud = postaplot_engine(loc=pos, series=val[m_cat],
                                             **kde_kwa, color=colors, **plot_kwa)
-
-                # record
-                if cloud is not None: 
-                    collections.append(cloud)
-                drawn_any = True
+                box_dict = plot_box(draw_box=box, loc=pos, series=val[m_cat], **box_kwa)
+                drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
 
             else:
                 # discrete hue + dodge=True → draw one cloud per hue level, dodged
@@ -372,10 +456,8 @@ def postaplot(
                     if not np.any(m): continue
                     cloud = postaplot_engine(loc=pos + off, series=val[m],
                                                 **kde_kwa, color=pal_map.get(h, color), **plot_kwa)
-                    # record
-                    if cloud is not None: 
-                        collections.append(cloud)
-                drawn_any = True
+                    box_dict = plot_box(draw_box=box, loc=pos + off, series=val[m], **box_kwa)
+                    drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
 
     if not drawn_any:
         return []
@@ -395,4 +477,10 @@ def postaplot(
 
     ax.set_xlabel(x if isinstance(x, str) else "")
     ax.set_ylabel(y if isinstance(y, str) else "")
+
+    # Return drawn clouds and boxes if any
+    if not all(box is None for box in boxes):
+        collections = [*clouds, *boxes]
+    else:
+        collections = clouds
     return collections

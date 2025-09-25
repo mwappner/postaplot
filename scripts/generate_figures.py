@@ -110,6 +110,24 @@ def dodge_subgroups():
     postaplot.postaplot(df, x="group", y="y", hue="hue", dodge=True, ax=ax, alpha=0.5, seed=5)
     savefig(ax, "dodge.png"); plt.close(fig)
 
+def with_box():
+    df = toy_df(100, seed=2)
+    fig, ax = plt.subplots(figsize=(5,3.2))
+    postaplot.postaplot(df, x="group", y="y", ax=ax, seed=0, box=True)
+    savefig(ax, "with_box.png"); plt.close(fig)
+
+def with_custom_box():
+    df = toy_df(100, seed=2, dis_hue=True)
+    fig, ax = plt.subplots()
+    postaplot.postaplot(df, x="group", y="y", hue="hue", dodge=True,
+                        ax=ax, alpha=0.5, box=True,
+                        box_kwa={'color':'r', 'lw':3, 'showfliers':True, 'widths':0.2, 
+                        'whiskerprops':{'lw':1.5, 'c':'b'},
+                        'boxprops':{'facecolor':'lightgrey', 'alpha':0.7, 'lc':'k'},
+                        })
+    savefig(ax, "with_custom_box.png"); plt.close(fig)
+
+
 def supress_legend():
     df = toy_df(100, seed=9, con_hue=True)
     fig, ax = plt.subplots(figsize=(6.2,3.2))
@@ -152,6 +170,8 @@ def main():
     hue_customization()
     hollow_markers()
     dodge_subgroups()
+    with_box()
+    with_custom_box()
     supress_legend()
     low_level_engine()
     separate_edge_face()

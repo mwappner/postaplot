@@ -130,6 +130,32 @@ Each subgroup within a category gets its own offset cloud.
 
 ---
 
+## 9. Boxplots
+
+```python
+fig, ax = plt.subplots()
+postaplot.postaplot(
+    df, x="group", y="y", hue="hue", dodge=True,
+    ax=ax, alpha=0.5, box=True
+)
+```
+
+![alt text](figures/with_box.png)
+
+Boxes can also be customized through `box_kwa`.
+
+```python
+postaplot(data=df, x="group", y="y", box=True,
+          box_kwa={'color':'r', 'lw':3, 'showfliers':True, 
+                   'whiskerprops':{'lw':1.5, 'c':'b'},
+                   'boxprops':{'facecolor':'lightgrey', 'alpha':0.7, 'lc':'k'},
+                   })
+```
+
+![alt text](figures/with_custom_box.png)
+
+---
+
 ## 9. Supress legend or colorbar
 
 Control reference rendering:

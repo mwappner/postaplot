@@ -142,6 +142,55 @@ def choose_color_plotting_mode(plot_kw, vert):
                 scatter_kwargs["color"] = color
     return scatter_kwargs
 
+def _set_box_default_and_aliases(box_kwa, defaults, lc, lw):
+    """ Set default boxplot artist properties and handle aliases."""
+    box_kwa = dict(box_kwa)  # don't mutate caller's dict
+
+    # build default artist properties
+    boxprops = dict(color=lc, lw=lw) | defaults.get('boxprops', {})
+    medianprops = dict(color=lc, lw=lw)
+    whiskerprops = dict(color=lc, lw=lw)
+    capprops = dict(color=lc, lw=lw)
+
+    # set default values for main boxplot properties if not given
+    for prop in ['showfliers', 'manage_ticks', 'widths', 'patch_artist']:
+        if prop not in box_kwa:
+            box_kwa[prop] = defaults[prop]
+
+    # Handle aliases for color and linewidth in boxprops and others
+    def update_with_alias(props, key, aliases):
+        for alias in aliases:
+            if alias in props:
+                props[key] = props.pop(alias)
+
+    # Update boxprops with user values and aliases
+    user_boxprops = box_kwa.pop('boxprops', {})
+    update_with_alias(user_boxprops, 'color', ['linecolor', 'lc'])
+    update_with_alias(user_boxprops, 'lw', ['linewidth'])
+    boxprops.update(user_boxprops)
+
+    user_medianprops = box_kwa.pop('medianprops', {})
+    update_with_alias(user_medianprops, 'color', ['c'])
+    update_with_alias(user_medianprops, 'lw', ['linewidth'])
+    medianprops.update(user_medianprops)
+
+    user_whiskerprops = box_kwa.pop('whiskerprops', {})
+    update_with_alias(user_whiskerprops, 'color', ['c'])
+    update_with_alias(user_whiskerprops, 'lw', ['linewidth'])
+    whiskerprops.update(user_whiskerprops)
+
+    user_capprops = box_kwa.pop('capprops', {})
+    update_with_alias(user_capprops, 'color', ['c'])
+    update_with_alias(user_capprops, 'lw', ['linewidth'])
+    capprops.update(user_capprops)
+
+    # set the finalized props back into box_kwa
+    box_kwa['boxprops'] = boxprops
+    box_kwa['medianprops'] = medianprops
+    box_kwa['whiskerprops'] = whiskerprops
+    box_kwa['capprops'] = capprops
+
+    return box_kwa
 
 def _resolve_hue_mapping(hue_vals, hue_order, palette, hue_norm=None):
     """Resolve hue semantics and colors.

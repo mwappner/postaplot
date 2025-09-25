@@ -1,3 +1,6 @@
+[![CI](https://github.com/mwappner/postaplot/actions/workflows/ci.yml/badge.svg)](https://github.com/mwappner/postaplot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 # postaplot
 
 POSTA (Presentation Of Sincere Total Adquisitions) plots provide *kernel-density aware scatter plots* with a seaborn-like API.  
@@ -43,6 +46,7 @@ plt.show()
   * continuous → colorbar
   * customizable order, mapping and normalization
 * **Dodge** discrete subgroups into separate sub-clouds.
+* Add **boxplots** with a simple toggle.
 * Flexible marker styling:
   * aliases: `ms`, `mfc`, `mec`, `mew` work like in `plot()`.
   * `hollow=True` for edge-only markers.
@@ -61,6 +65,7 @@ See the [Cookbook](docs/cookbook.md) for examples:
 * Discrete vs continuous hue and customization
 * Hollow markers (edge-colored by hue)
 * Dodging multiple groups
+* Boxplots
 * Colorbars and legends
 * Custom edge vs face colors
 

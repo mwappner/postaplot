@@ -100,3 +100,10 @@ def _dodge_offsets(n_levels, dodge):
 
     # centered positions across [-width/2, width/2]
     return np.linspace(-width / 2.0, width / 2.0, n_levels)
+
+def _record_drawn(clouds, cloud, boxes, box):
+    if cloud is not None:
+        clouds.append(cloud)
+        boxes.append(box)
+        return True
+    return False
