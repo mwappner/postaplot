@@ -11,10 +11,11 @@ Each point is jittered horizontally according to the estimated density at its ve
 ## Installation
 
 ```bash
-pip install -e .
+python -m pip install "https://github.com/mwappner/postaplot/archive/refs/heads/main.zip"
+
 ```
 
-Requires Python ≥3.8, and depends on `numpy`, `scipy`, `matplotlib`, `pandas`.
+Requires Python ≥3.8, and depends on `numpy`, `scipy`, `matplotlib`, `pandas`. PyPI coming soon.
 
 ## Quickstart
 
