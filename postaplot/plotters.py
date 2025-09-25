@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 from typing import Literal, Optional, Sequence, Mapping, Union, Callable
 from matplotlib.axes import Axes
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, Colormap
 from matplotlib.collections import Collection
 
 from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_scale, _dodge_offsets, _record_drawn
@@ -263,7 +263,7 @@ def postaplot(
     dodge: Optional[Union[bool, float]] = False,
     orient: Optional[str] = None,
     color: Optional[Union[str, tuple]] = None,
-    palette: Optional[Union[str, Mapping, Sequence]] = None,
+    palette: Optional[Union[str, Mapping, Sequence, Colormap]] = None,
     ax: Optional[Axes] = None,
     hue_norm: Optional[Union[tuple, Normalize]] = None,  # (vmin, vmax) for continuous hue; None = auto
     # above are standard seaborn-like parameters
