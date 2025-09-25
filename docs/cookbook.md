@@ -156,7 +156,7 @@ postaplot(data=df, x="group", y="y", box=True,
 
 ---
 
-## 9. Supress legend or colorbar
+## 10. Supress legend or colorbar
 
 Control reference rendering:
 
@@ -168,7 +168,7 @@ postaplot.postaplot(df, x="group", y="y", hue="hue_num", reference=False)
 
 ---
 
-## 10. Low-level engine
+## 11. Low-level engine
 
 ```python
 from postaplot import postaplot_engine
@@ -186,7 +186,7 @@ Useful when you want full control over axes and legends yourself.
 
 ---
 
-## 11. Separate edge and face colors
+## 12. Separate edge and face color mappings
 
 This is not natively supported, so you need a workaround. Either plot twice, using seed to make both clouds the overlap:
 
