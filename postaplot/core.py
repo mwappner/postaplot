@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import stats
 
 def choose_default_scale(width_distr, scale):
     if scale is None:
@@ -107,3 +108,48 @@ def _record_drawn(clouds, cloud, boxes, box):
         boxes.append(box)
         return True
     return False
+
+def choose_width_function(width_method):
+    if width_method == 'histogram':
+        return histogram_function
+    elif width_method == 'kde':
+        return kde_function
+    else:
+        raise ValueError(f"Unknown width_method: {width_method}")
+
+def histogram_function(data, **hist_args):
+    if 'bins' not in hist_args:
+        hist_args['bins'] = 'auto'
+
+    hist, bin_edges = np.histogram(data, **hist_args)
+    max_val = hist.max()
+
+    def hist_at_point(x):
+        # Use vectorized calls so we can handle x being an array
+        x = np.asarray(x)
+        idx = np.searchsorted(bin_edges, x, side='right') - 1
+
+        # Where x is exactly the last edge, assign to last bin
+        idx = np.where(x == bin_edges[-1], len(hist) - 1, idx)
+        
+        # If x is outside the bin range, return 0
+        out_of_bounds = (idx < 0) | (idx > len(hist) - 1)
+
+        # Temp results where we clip values out of bounds
+        result = hist[np.clip(idx, 0, len(hist) - 1)] / max_val if max_val > 0 else 0
+
+        # Replace out-of-bounds results with 0
+        result = np.where(out_of_bounds, 0, result)
+
+        return result if result.shape != () else result.item()
+
+    return hist_at_point
+
+def kde_function(data, **kde_args):
+    kde = stats.gaussian_kde(data, **kde_args) if len(data)>1 else (lambda y: np.ones_like(y, dtype=float))
+    max_val = kde(data).max()
+
+    def kde_at_point(x):
+        return kde(x) / max_val if max_val > 0 else np.zeros_like(x, dtype=float)
+    
+    return kde_at_point

@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from scipy import stats
 import matplotlib.pyplot as plt
 
 from typing import Literal, Optional, Sequence, Mapping, Union, Callable
@@ -8,7 +7,7 @@ from matplotlib.axes import Axes
 from matplotlib.colors import Normalize, Colormap
 from matplotlib.collections import Collection
 
-from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_scale, _dodge_offsets, _record_drawn
+from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_scale, _dodge_offsets, _record_drawn, choose_width_function
 from .styling import _resolve_hue_mapping, choose_color_plotting_mode, _alias_scatter_kwargs, _set_box_default_and_aliases
 from .legend import add_legend_or_colorbar
 
@@ -21,8 +20,9 @@ def postaplot_engine(
     rasterized: Optional[bool] = None,
     width_distr: Literal['normal', 'uniform'] = 'normal',
     orientation: Literal['vertical', 'horizontal'] = 'vertical',
+    width_method: Literal['kde', 'histogram'] = 'kde',
+    width_fun_args: dict = {},
     rng: Optional[np.random.Generator] = None,
-    bw_method: Optional[Union[str, float, Callable]] = None,
     **plot_kw,
 ) -> Optional[Collection]:
     """
@@ -78,17 +78,17 @@ def postaplot_engine(
         Decides if the scatter plot extends horizontally or vertically, similar
         to the `vert` argument in matplotlib.pyplot.boxplot. Default is
         'vertical'.
+    width_method : 'kde' or 'histogram', optional
+        Method to use to estimate the width of the cloud at each point. The default 
+        is 'kde'.
+    width_fun_args : dict, optional
+        Additional arguments to be passed to the width function. For 'kde', these
+        are passed to scipy.stats.gaussian_kde. For 'histogram', these are passed
+        to numpy.histogram. The default is {}.
     rng : np.random.Generator or None, optional
         A numpy random number generator to use. If None, a new default generator
         will be created. Use this to set the random seed for reproducibility. 
         The default is None.
-    bw_method : str, scalar or callable, optional
-        The method used to calculate the estimator bandwidth. This can be 'scott',
-        'silverman', a scalar constant or a callable. If a scalar, this will be 
-        used directly as kde.factor. If a callable, it should take a gaussian_kde
-        instance as only parameter and return a scalar. If None (default), 'scott'
-        is used. See Notes in scipy.stats.gaussian_kde for more details.
-
 
     *plot_kw :
         Other keyword arguments to be passed to the plotting function.
@@ -104,9 +104,8 @@ def postaplot_engine(
     series = np.asarray(series)
     y = series[~np.isnan(series)]
 
-    kde = stats.gaussian_kde(y, bw_method) if len(y)>1 else (lambda y: np.ones_like(y, dtype=float))
-    max_val = kde(y).max()
-    
+    width_fun = choose_width_function(width_method)(y, **width_fun_args)
+
     # default axis
     if ax is None:
         ax = plt.gca()
@@ -118,7 +117,7 @@ def postaplot_engine(
     # get default values
     sampler = get_sampler(width_distr, rng)
     scale = choose_default_scale(width_distr, scale)
-    category_jittered, series_value = sampler(loc, kde(y)/max_val * scale, size=len(y)), y
+    category_jittered, series_value = sampler(loc, width_fun(y) * scale, size=len(y)), y
     
     # choose orientation
     if orientation == 'horizontal':
@@ -270,7 +269,8 @@ def postaplot(
     # extras specific to this plot type:
     horizontal_scale: Optional[float] = None,  # was `scale` in the engine
     width_distr: str = "normal",
-    bw_method=None, # like in seaborn violinplot and other kde-based plots
+    width_method: Literal['kde', 'histogram'] = 'kde',
+    width_fun_args: dict = {},
     seed: Optional[int] = None,
     rasterized: Optional[bool] = None,
     alpha: float = 0.4, # it's here to set a default in a visible place
@@ -396,7 +396,8 @@ def postaplot(
     # prepare arguments
     kde_kwa = dict(scale=horizontal_scale, ax=ax, alpha=alpha,
                 rasterized=rasterized, hollow=hollow, width_distr=width_distr,
-                orientation=orientation, rng=rng, bw_method=bw_method)
+                orientation=orientation, rng=rng, width_method=width_method,
+                width_fun_args=width_fun_args)
     
     box_kwa = dict(ax=ax, orientation=orientation, **box_kwa)
 
