@@ -16,6 +16,40 @@ def _split_df():
 
 
 @pytest.mark.parametrize("orient", ["x", "y"])
+@pytest.mark.parametrize("side, sign", [("negative", -1), ("positive", 1)])
+@pytest.mark.parametrize("with_hue", [False, True])
+def test_single_half_cloud_geometry_color_and_legend(orient, side, sign, with_hue):
+    df = pd.DataFrame({
+        "grp": ["A"] * 4,
+        "value": [1., 2., 3., 4.],
+        "hue": ["only"] * 4,
+    })
+    x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
+    hue = "hue" if with_hue else None
+    palette = {"only": "#336699"} if with_hue else None
+    fig, ax = plt.subplots()
+    clouds = postaplot(
+        df, x=x, y=y, hue=hue, split=True, split_side=side,
+        color=None if with_hue else "#993366", palette=palette,
+        seed=2, ax=ax,
+    )
+
+    assert len(clouds) == 1
+    categorical_index, value_index = ((0, 1) if orient == "x" else (1, 0))
+    offsets = clouds[0].get_offsets()
+    assert np.all(sign * offsets[:, categorical_index] >= 0)
+    assert np.array_equal(offsets[:, value_index], df["value"])
+    expected_color = palette["only"] if with_hue else "#993366"
+    assert np.allclose(
+        clouds[0].get_facecolors()[0], mcolors.to_rgba(expected_color, .4)
+    )
+    if with_hue:
+        assert [text.get_text() for text in ax.get_legend().get_texts()] == ["only"]
+    else:
+        assert ax.get_legend() is None
+
+
+@pytest.mark.parametrize("orient", ["x", "y"])
 def test_split_geometry_order_palette_and_legend(orient):
     df = _split_df()
     x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
@@ -64,9 +98,39 @@ def test_split_seeded_reproducibility():
         assert np.array_equal(first.get_offsets(), second.get_offsets())
 
 
+def test_split_side_mirrors_two_hues_without_reordering_them():
+    df = _split_df()
+    fig, (ax_negative, ax_positive) = plt.subplots(1, 2)
+    negative = postaplot(
+        df, x="grp", y="value", hue="hue", split=True,
+        split_side="negative", seed=10, ax=ax_negative,
+    )
+    positive = postaplot(
+        df, x="grp", y="value", hue="hue", split=True,
+        split_side="positive", seed=10, ax=ax_positive,
+    )
+
+    assert len(negative) == len(positive)
+    category_positions = [0, 0, 1, 1, 2]
+    for loc, first, mirrored in zip(category_positions, negative, positive):
+        assert np.allclose(
+            mirrored.get_offsets()[:, 0] - loc,
+            -(first.get_offsets()[:, 0] - loc),
+        )
+        assert np.array_equal(
+            mirrored.get_offsets()[:, 1], first.get_offsets()[:, 1]
+        )
+        assert np.allclose(mirrored.get_facecolors(), first.get_facecolors())
+    expected_legend = ["left", "right"]
+    assert [
+        t.get_text() for t in ax_negative.get_legend().get_texts()
+    ] == expected_legend
+    assert [
+        t.get_text() for t in ax_positive.get_legend().get_texts()
+    ] == expected_legend
+
+
 @pytest.mark.parametrize("extra, match", [
-    ({}, "discrete hue"),
-    ({"hue": "one"}, "exactly two"),
     ({"hue": "many"}, "continuous hue"),
     ({"hue": "two", "dodge": True}, "dodge"),
 ])
@@ -76,6 +140,7 @@ def test_invalid_split_draws_no_artists(extra, match):
         "value": np.arange(10, dtype=float),
         "one": ["only"] * 10,
         "two": ["u", "v"] * 5,
+        "three": ["u", "v", "w", "u", "v"] * 2,
         "many": np.arange(10, dtype=float),
     })
     fig, ax = plt.subplots()
@@ -84,6 +149,169 @@ def test_invalid_split_draws_no_artists(extra, match):
     assert not ax.collections
     assert not ax.lines
     assert not ax.patches
+
+
+@pytest.mark.parametrize("n_hues", [3, 4])
+@pytest.mark.parametrize("orient", ["x", "y"])
+@pytest.mark.parametrize("side", ["negative", "positive"])
+def test_multi_hue_split_slots_directions_and_legend(n_hues, orient, side):
+    levels = [f"h{i}" for i in range(n_hues)]
+    df = pd.DataFrame({
+        "grp": ["A"] * (2 * n_hues),
+        "value": np.ravel([[i, i + .5] for i in range(n_hues)]),
+        "hue": np.repeat(levels, 2),
+    })
+    x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
+    fig, ax = plt.subplots()
+    clouds = postaplot(
+        df, x=x, y=y, hue="hue", split=True, split_side=side,
+        width_distr="uniform", width_method="histogram", seed=18, ax=ax,
+    )
+
+    edges = np.linspace(-.2, .2, n_hues + 1)
+    categorical_index, value_index = ((0, 1) if orient == "x" else (1, 0))
+    for i, cloud in enumerate(clouds):
+        expected_side = side if i % 2 == 0 else (
+            "positive" if side == "negative" else "negative"
+        )
+        anchor = edges[i + 1] if expected_side == "negative" else edges[i]
+        categorical = cloud.get_offsets()[:, categorical_index]
+        assert np.all(categorical >= edges[i])
+        assert np.all(categorical <= edges[i + 1])
+        if expected_side == "negative":
+            assert np.all(categorical <= anchor)
+        else:
+            assert np.all(categorical >= anchor)
+        assert np.array_equal(
+            cloud.get_offsets()[:, value_index], [i, i + .5]
+        )
+    assert [text.get_text() for text in ax.get_legend().get_texts()] == levels
+
+
+def test_multi_hue_order_and_missing_level_keep_fixed_slots():
+    hue_order = ["d", "b", "a", "c"]
+    df = pd.DataFrame({
+        "grp": np.repeat(["A", "B"], [8, 6]),
+        "value": np.arange(14, dtype=float),
+        "hue": ["a", "a", "b", "b", "c", "c", "d", "d",
+                "a", "a", "c", "c", "d", "d"],
+    })
+    fig, ax = plt.subplots()
+    clouds = postaplot(
+        df, x="grp", y="value", hue="hue", hue_order=hue_order,
+        split=True, width_distr="uniform", width_method="histogram",
+        seed=19, ax=ax,
+    )
+
+    assert len(clouds) == 7
+    edges = np.linspace(-.2, .2, 5)
+    # Category B has no "b", so its second slot stays empty while a/c retain
+    # the third/fourth slots assigned by the global hue order.
+    for cloud, slot in zip(clouds[4:], [0, 2, 3]):
+        categorical = cloud.get_offsets()[:, 0] - 1
+        assert np.all(categorical >= edges[slot])
+        assert np.all(categorical <= edges[slot + 1])
+    assert [text.get_text() for text in ax.get_legend().get_texts()] == hue_order
+
+
+@pytest.mark.parametrize("n_hues", [3, 4])
+def test_multi_hue_split_boxes_follow_slot_anchors(n_hues):
+    levels = [f"h{i}" for i in range(n_hues)]
+    df = pd.DataFrame({
+        "grp": ["A"] * (4 * n_hues),
+        "value": np.ravel([[i, i + .25, i + .5, i + .75]
+                           for i in range(n_hues)]),
+        "hue": np.repeat(levels, 4),
+    })
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x="grp", y="value", hue="hue", split=True, box=True,
+        width_distr="uniform", width_method="histogram", seed=20, ax=ax,
+    )
+
+    boxes = artists[n_hues:]
+    edges = np.linspace(-.2, .2, n_hues + 1)
+    scale_factor = 2 / n_hues
+    expected_width = .12 * scale_factor
+    expected_inset = (.12 + .04) * scale_factor / 2
+    for i, box in enumerate(boxes):
+        side = "negative" if i % 2 == 0 else "positive"
+        sign = -1 if side == "negative" else 1
+        anchor = edges[i + 1] if side == "negative" else edges[i]
+        center = np.mean(box["medians"][0].get_xdata())
+        assert np.isclose(center, anchor + sign * expected_inset)
+        box_x = box["boxes"][0].get_path().vertices[:, 0]
+        assert np.isclose(np.max(box_x) - np.min(box_x), expected_width)
+        inner_edge = np.max(box_x) if side == "negative" else np.min(box_x)
+        for whisker in box["whiskers"]:
+            assert np.allclose(whisker.get_xdata(), inner_edge)
+        for cap in box["caps"]:
+            cap_x = cap.get_xdata()
+            assert np.isclose(cap_x[0], inner_edge)
+            assert sign * (cap_x[1] - inner_edge) > 0
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_invalid_split_side_draws_no_artists(split):
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match="split_side must be"):
+        postaplot(
+            x=["A", "A"], y=[1., 2.], split=split,
+            split_side="center", ax=ax,
+        )
+    assert not ax.collections
+    assert not ax.lines
+    assert not ax.patches
+
+
+def test_split_side_has_no_effect_when_split_is_false():
+    df = _split_df()
+    fig, (ax_negative, ax_positive) = plt.subplots(1, 2)
+    negative = postaplot(
+        df, x="grp", y="value", hue="hue", split=False,
+        split_side="negative", seed=11, ax=ax_negative,
+    )
+    positive = postaplot(
+        df, x="grp", y="value", hue="hue", split=False,
+        split_side="positive", seed=11, ax=ax_positive,
+    )
+    for first, second in zip(negative, positive):
+        assert np.array_equal(first.get_offsets(), second.get_offsets())
+
+
+@pytest.mark.parametrize("orient", ["x", "y"])
+@pytest.mark.parametrize("side, sign", [("negative", -1), ("positive", 1)])
+@pytest.mark.parametrize("with_hue", [False, True])
+def test_single_half_box_follows_selected_side(orient, side, sign, with_hue):
+    df = pd.DataFrame({
+        "grp": ["A"] * 4,
+        "value": [1., 2., 3., 4.],
+        "hue": ["only"] * 4,
+    })
+    x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x=x, y=y, hue="hue" if with_hue else None,
+        split=True, split_side=side, box=True, seed=12, ax=ax,
+    )
+
+    cloud, box = artists
+    categorical_index = 0 if orient == "x" else 1
+    assert np.all(sign * cloud.get_offsets()[:, categorical_index] >= 0)
+    category_coordinate = (
+        lambda artist: artist.get_xdata()
+        if orient == "x" else artist.get_ydata()
+    )
+    center = np.mean(category_coordinate(box["medians"][0]))
+    assert np.isclose(center, sign * .08)
+    box_coordinates = box["boxes"][0].get_path().vertices[:, categorical_index]
+    inner_edge = np.max(box_coordinates) if sign < 0 else np.min(box_coordinates)
+    for whisker in box["whiskers"]:
+        assert np.allclose(category_coordinate(whisker), inner_edge)
+    for cap in box["caps"]:
+        cap_coordinates = category_coordinate(cap)
+        assert np.isclose(cap_coordinates[0], inner_edge)
+        assert sign * (cap_coordinates[1] - inner_edge) > 0
 
 
 @pytest.mark.parametrize("orient", ["x", "y"])

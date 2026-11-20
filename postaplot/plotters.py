@@ -306,6 +306,7 @@ def postaplot(
     hue_order: Optional[Sequence] = None,
     dodge: Optional[Union[bool, float]] = False,
     split: bool = False,
+    split_side: Literal['negative', 'positive'] = 'negative',
     orient: Optional[str] = None,
     color: Optional[Union[str, tuple]] = None,
     palette: Optional[Union[str, Mapping, Sequence, Colormap]] = None,
@@ -345,9 +346,14 @@ def postaplot(
         If True and hue is given, dodge hue groups at each category. If float,
         use that as the total width to dodge across (default 0.6).
     split : bool, default False
-        If True, draw exactly two discrete hue levels on opposite sides of
-        each category. The first hue level is placed on the negative side and
-        the second on the positive side.
+        If True, draw one-sided clouds. With no hue or a single hue level,
+        draw one half cloud per category. With two hue levels, draw the two
+        halves back to back. With more than two, draw the half clouds side
+        by side in hue order, alternating the direction they face.
+    split_side : {'negative', 'positive'}, default 'negative'
+        Direction of the first half cloud. 'negative' puts it on the left
+        in vertical plots or below in horizontal plots. 'positive' puts it
+        on the right or above.
     orient : {"x","y"} or None
         Orientation (categorical on `x` or on `y`). If None, inferred.
     color : color-like, optional
@@ -391,6 +397,12 @@ def postaplot(
     -------
     ax : matplotlib Axes
     """
+    if split_side not in ('negative', 'positive'):
+        raise ValueError(
+            "split_side must be 'negative' or 'positive'; "
+            f"got {split_side!r}."
+        )
+
     # Resolve ax
     if ax is None:
         ax = plt.gca()
@@ -443,15 +455,8 @@ def postaplot(
 
     # Split validation must happen before any artists are drawn.
     if split:
-        if hue_vals is None:
-            raise ValueError("split=True requires a discrete hue variable.")
         if is_continuous_hue:
             raise ValueError("split=True does not support continuous hue.")
-        if len(hue_levels) != 2:
-            raise ValueError(
-                "split=True requires exactly two resolved hue levels; "
-                f"got {len(hue_levels)}."
-            )
         if dodge:
             raise ValueError("split=True cannot be combined with dodge.")
 
@@ -469,11 +474,17 @@ def postaplot(
     
     box_kwa = dict(ax=ax, orientation=orientation, **box_kwa)
     split_box_offset = None
+    split_count = max(1, len(hue_levels))
+    split_scale_factor = 1 if split_count == 1 else 2 / split_count
     if split and box:
-        split_box_width = box_kwa.get('widths', _SPLIT_BOX_WIDTH)
+        split_box_width = box_kwa.get(
+            'widths', _SPLIT_BOX_WIDTH * split_scale_factor
+        )
         box_kwa['widths'] = split_box_width
         width = float(np.asarray(split_box_width).reshape(-1)[0])
-        split_box_offset = (abs(width) + _SPLIT_BOX_GAP) / 2
+        split_box_offset = (
+            abs(width) + _SPLIT_BOX_GAP * split_scale_factor
+        ) / 2
 
     # Loop categories (and hues) → call engine
     drawn_any = False
@@ -482,33 +493,65 @@ def postaplot(
     for c in cats_unique:
         pos = cat_to_pos[c]
         m_cat = (cat == c)
-        
-        # if no hue, just draw once
-        if hue_vals is None:
-            # Single color for the whole cloud
-            color_kw = {}
-            if color is not None:
-                color_kw["color"] = color
-            
-            # plot
-            cloud = postaplot_engine(loc=pos, series=val[m_cat],
-                                        **kde_kwa, **color_kw, **plot_kwa)
-            box_dict = plot_box(draw_box=box, loc=pos, series=val[m_cat], **box_kwa)
-            drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
-            continue # to avoid nesting below
 
         if split:
-            for sign, side, h in zip(
-                (-1, 1), ('negative', 'positive'), hue_levels
-            ):
-                m = m_cat & (hue_vals == h)
+            opposite_side = (
+                'positive' if split_side == 'negative' else 'negative'
+            )
+            if hue_vals is None:
+                split_groups = [(split_side, pos, m_cat, color)]
+            elif split_count == 1:
+                h = hue_levels[0]
+                split_groups = [(
+                    split_side, pos, m_cat & (hue_vals == h),
+                    pal_map.get(h, color),
+                )]
+            elif split_count == 2:
+                split_groups = [
+                    (
+                        side, pos, m_cat & (hue_vals == h),
+                        pal_map.get(h, color),
+                    )
+                    for side, h in zip(
+                        (split_side, opposite_side), hue_levels
+                    )
+                ]
+            else:
+                sides = [
+                    split_side if i % 2 == 0 else opposite_side
+                    for i in range(split_count)
+                ]
+                # The default bounded cloud spans 0.4 category units. Split
+                # that span into fixed slots, anchoring each half at the edge
+                # from which its one-sided jitter extends into the slot.
+                slot_edges = pos + np.linspace(-0.2, 0.2, split_count + 1)
+                split_groups = [
+                    (
+                        side,
+                        slot_edges[i + 1] if side == 'negative'
+                        else slot_edges[i],
+                        m_cat & (hue_vals == h),
+                        pal_map.get(h, color),
+                    )
+                    for i, (side, h) in enumerate(zip(sides, hue_levels))
+                ]
+
+            for side, anchor, m, group_color in split_groups:
                 if not np.any(m):
                     continue
-                cloud = postaplot_engine(
-                    loc=pos, series=val[m], side=side,
-                    **kde_kwa, color=pal_map.get(h, color), **plot_kwa
+                color_kw = {} if group_color is None else {'color': group_color}
+                split_kde_kwa = dict(
+                    kde_kwa,
+                    scale=choose_default_scale(
+                        width_distr, horizontal_scale
+                    ) * split_scale_factor,
                 )
-                box_loc = pos + sign * split_box_offset if box else pos
+                cloud = postaplot_engine(
+                    loc=anchor, series=val[m], side=side,
+                    **split_kde_kwa, **color_kw, **plot_kwa
+                )
+                sign = -1 if side == 'negative' else 1
+                box_loc = anchor + sign * split_box_offset if box else anchor
                 box_dict = plot_box(
                     draw_box=box, loc=box_loc, series=val[m], **box_kwa
                 )
@@ -518,6 +561,20 @@ def postaplot(
                     clouds, cloud, boxes, box_dict
                 ) or drawn_any
             continue
+
+        # if no hue, just draw once
+        if hue_vals is None:
+            # Single color for the whole cloud
+            color_kw = {}
+            if color is not None:
+                color_kw["color"] = color
+
+            # plot
+            cloud = postaplot_engine(loc=pos, series=val[m_cat],
+                                        **kde_kwa, **color_kw, **plot_kwa)
+            box_dict = plot_box(draw_box=box, loc=pos, series=val[m_cat], **box_kwa)
+            drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
+            continue # to avoid nesting below
 
         if not dodge:
             # One cloud per category; per-point colors from hue
