@@ -11,6 +11,9 @@ from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_
 from .styling import _resolve_hue_mapping, choose_color_plotting_mode, _alias_scatter_kwargs, _set_box_default_and_aliases
 from .legend import add_legend_or_colorbar
 
+_SPLIT_BOX_WIDTH = 0.12
+_SPLIT_BOX_GAP = 0.04
+
 def postaplot_engine(
     loc: Union[float, int, np.integer, np.floating],
     series: Union[Sequence, np.ndarray, pd.Series],
@@ -234,6 +237,32 @@ def plot_box(
 
     return box
 
+
+def _move_split_whiskers(box, side, orientation):
+    """Move split-box whiskers and caps to the box's inner edge."""
+    categorical_index = 0 if orientation == 'vertical' else 1
+    box_coordinates = box['boxes'][0].get_path().vertices[:, categorical_index]
+    if side == 'negative':
+        inner_edge = np.max(box_coordinates)
+        outward_sign = -1
+    else:
+        inner_edge = np.min(box_coordinates)
+        outward_sign = 1
+
+    coordinate = 'xdata' if orientation == 'vertical' else 'ydata'
+    for whisker in box['whiskers']:
+        getattr(whisker, f'set_{coordinate}')(
+            np.full_like(getattr(whisker, f'get_{coordinate}')(), inner_edge)
+        )
+
+    for cap in box['caps']:
+        original = getattr(cap, f'get_{coordinate}')()
+        outward_length = (np.max(original) - np.min(original)) / 2
+        getattr(cap, f'set_{coordinate}')(
+            [inner_edge, inner_edge + outward_sign * outward_length]
+        )
+
+
 def postaplot_columns(data, scale=None, ax=None, alpha=0.4, rasterized=None, orientation='vertical', **kw):
     """
     A set of measurements using the postaplot method. Data should be either 
@@ -425,8 +454,6 @@ def postaplot(
             )
         if dodge:
             raise ValueError("split=True cannot be combined with dodge.")
-        if box:
-            raise ValueError("split=True cannot be combined with box=True.")
 
     # Category baseline integer positions
     cat_to_pos = {c: i for i, c in enumerate(cats_unique)}
@@ -441,6 +468,12 @@ def postaplot(
                 width_fun_args=width_fun_args)
     
     box_kwa = dict(ax=ax, orientation=orientation, **box_kwa)
+    split_box_offset = None
+    if split and box:
+        split_box_width = box_kwa.get('widths', _SPLIT_BOX_WIDTH)
+        box_kwa['widths'] = split_box_width
+        width = float(np.asarray(split_box_width).reshape(-1)[0])
+        split_box_offset = (abs(width) + _SPLIT_BOX_GAP) / 2
 
     # Loop categories (and hues) → call engine
     drawn_any = False
@@ -465,7 +498,9 @@ def postaplot(
             continue # to avoid nesting below
 
         if split:
-            for side, h in zip(('negative', 'positive'), hue_levels):
+            for sign, side, h in zip(
+                (-1, 1), ('negative', 'positive'), hue_levels
+            ):
                 m = m_cat & (hue_vals == h)
                 if not np.any(m):
                     continue
@@ -473,7 +508,15 @@ def postaplot(
                     loc=pos, series=val[m], side=side,
                     **kde_kwa, color=pal_map.get(h, color), **plot_kwa
                 )
-                drawn_any = _record_drawn(clouds, cloud, boxes, None) or drawn_any
+                box_loc = pos + sign * split_box_offset if box else pos
+                box_dict = plot_box(
+                    draw_box=box, loc=box_loc, series=val[m], **box_kwa
+                )
+                if box_dict is not None:
+                    _move_split_whiskers(box_dict, side, orientation)
+                drawn_any = _record_drawn(
+                    clouds, cloud, boxes, box_dict
+                ) or drawn_any
             continue
 
         if not dodge:

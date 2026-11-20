@@ -69,7 +69,6 @@ def test_split_seeded_reproducibility():
     ({"hue": "one"}, "exactly two"),
     ({"hue": "many"}, "continuous hue"),
     ({"hue": "two", "dodge": True}, "dodge"),
-    ({"hue": "two", "box": True}, "box=True"),
 ])
 def test_invalid_split_draws_no_artists(extra, match):
     df = pd.DataFrame({
@@ -85,6 +84,144 @@ def test_invalid_split_draws_no_artists(extra, match):
     assert not ax.collections
     assert not ax.lines
     assert not ax.patches
+
+
+@pytest.mark.parametrize("orient", ["x", "y"])
+def test_split_boxes_match_subsets_and_leave_center_gap(orient):
+    df = _split_df().query("grp == 'B'")
+    x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x=x, y=y, hue="hue", split=True, box=True,
+        box_kwa={"capwidths": .08}, seed=12, ax=ax,
+    )
+
+    clouds, boxes = artists[:2], artists[2:]
+    assert len(clouds) == len(boxes) == 2
+    category_coordinate = (
+        lambda artist: artist.get_xdata()
+        if orient == "x" else artist.get_ydata()
+    )
+    centers = [np.mean(category_coordinate(box["medians"][0])) for box in boxes]
+    assert centers[0] < 0 < centers[1]
+    category_index = 0 if orient == "x" else 1
+    box_edges = [
+        box["boxes"][0].get_path().vertices[:, category_index]
+        for box in boxes
+    ]
+    assert np.max(box_edges[0]) < 0 < np.min(box_edges[1])
+    assert np.isclose(np.min(box_edges[1]) - np.max(box_edges[0]), .04)
+
+    value_coordinate = (
+        lambda artist: artist.get_ydata()
+        if orient == "x" else artist.get_xdata()
+    )
+    assert np.isclose(np.mean(value_coordinate(boxes[0]["medians"][0])), 1.5)
+    assert np.isclose(np.mean(value_coordinate(boxes[1]["medians"][0])), 3.5)
+    expected_whisker_values = [([1.25, 1.], [1.75, 2.]),
+                               ([3.25, 3.], [3.75, 4.])]
+    for sign, center, inner_edge, box, expected_values in zip(
+        [-1, 1], centers,
+        [np.max(box_edges[0]), np.min(box_edges[1])],
+        boxes, expected_whisker_values,
+    ):
+        for whisker in box["whiskers"]:
+            assert np.allclose(category_coordinate(whisker), inner_edge)
+        for cap in box["caps"]:
+            cap_coordinates = category_coordinate(cap)
+            assert np.isclose(cap_coordinates[0], inner_edge)
+            assert np.isclose(cap_coordinates[1], inner_edge + sign * .04)
+        for whisker, expected in zip(box["whiskers"], expected_values):
+            assert np.allclose(value_coordinate(whisker), expected)
+        for cap, endpoint in zip(box["caps"], [expected_values[0][1], expected_values[1][1]]):
+            assert np.allclose(value_coordinate(cap), endpoint)
+
+
+def test_split_box_hue_order_missing_hue_and_width_override():
+    df = _split_df()
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x="grp", y="value", hue="hue", split=True, box=True,
+        hue_order=["right", "left"], order=["B", "C"],
+        box_kwa={"widths": .2}, seed=13, ax=ax,
+    )
+
+    boxes = artists[3:]
+    assert len(boxes) == 3
+    centers = [np.mean(box["medians"][0].get_xdata()) for box in boxes]
+    assert np.allclose(centers, [-.12, .12, .88])
+    assert np.isclose(
+        np.max(boxes[0]["boxes"][0].get_path().vertices[:, 0]), -.02
+    )
+    assert np.isclose(
+        np.min(boxes[1]["boxes"][0].get_path().vertices[:, 0]), .02
+    )
+    assert not any(center > 1 for center in centers)
+    inner_edges = [-.02, .02, .98]
+    for inner_edge, box in zip(inner_edges, boxes):
+        for whisker in box["whiskers"]:
+            assert np.allclose(whisker.get_xdata(), inner_edge)
+
+
+def test_split_box_fliers_stay_centered_and_caps_can_be_hidden():
+    df = pd.DataFrame({
+        "grp": ["A"] * 10,
+        "value": [0., 1., 2., 3., 100.] * 2,
+        "hue": ["left"] * 5 + ["right"] * 5,
+    })
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x="grp", y="value", hue="hue", split=True, box=True,
+        box_kwa={"showfliers": True, "showcaps": False}, seed=16, ax=ax,
+    )
+
+    boxes = artists[2:]
+    assert all(not box["caps"] for box in boxes)
+    for center, box in zip([-.08, .08], boxes):
+        assert np.allclose(box["fliers"][0].get_xdata(), center)
+        assert np.array_equal(box["fliers"][0].get_ydata(), [100.])
+        assert np.isclose(np.mean(box["medians"][0].get_xdata()), center)
+
+
+def test_split_box_does_not_change_seeded_clouds():
+    df = _split_df()
+    fig, (ax_without, ax_with) = plt.subplots(1, 2)
+    without = postaplot(
+        df, x="grp", y="value", hue="hue", split=True,
+        box=False, seed=14, ax=ax_without,
+    )
+    with_boxes = postaplot(
+        df, x="grp", y="value", hue="hue", split=True,
+        box=True, seed=14, ax=ax_with,
+    )
+    for cloud_without, cloud_with in zip(without, with_boxes[:len(without)]):
+        assert np.array_equal(cloud_without.get_offsets(), cloud_with.get_offsets())
+
+
+def test_non_split_box_behavior_is_preserved():
+    df = _split_df()
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x="grp", y="value", box=True, seed=15, ax=ax
+    )
+    assert len(artists) == 6
+    for pos, box in enumerate(artists[3:]):
+        assert np.isclose(np.mean(box["medians"][0].get_xdata()), pos)
+        for whisker in box["whiskers"]:
+            assert np.allclose(whisker.get_xdata(), pos)
+
+
+def test_dodged_box_whiskers_remain_centered():
+    df = _split_df()
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x="grp", y="value", hue="hue", dodge=True, box=True,
+        order=["B"], seed=17, ax=ax,
+    )
+    boxes = artists[2:]
+    for center, box in zip([-.15, .15], boxes):
+        for whisker in box["whiskers"]:
+            assert np.allclose(whisker.get_xdata(), center)
 
 
 def test_omitted_split_matches_false():
