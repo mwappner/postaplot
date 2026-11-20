@@ -1,3 +1,3 @@
-from .plotters import postaplot_engine, postaplot, postaplot_columns
+from .plotters import postaplot_engine, postaplot, postaplot_columns, plot_box
 
-__all__ = ["postaplot", "postaplot_engine", "postaplot_columns"]
+__all__ = ["postaplot", "postaplot_engine", "postaplot_columns", "plot_box"]

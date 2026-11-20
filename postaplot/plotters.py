@@ -23,6 +23,8 @@ def postaplot_engine(
     width_method: Literal['kde', 'histogram'] = 'kde',
     width_fun_args: dict = {},
     rng: Optional[np.random.Generator] = None,
+    *,
+    side: Literal['both', 'negative', 'positive'] = 'both',
     **plot_kw,
 ) -> Optional[Collection]:
     """
@@ -89,6 +91,10 @@ def postaplot_engine(
         A numpy random number generator to use. If None, a new default generator
         will be created. Use this to set the random seed for reproducibility. 
         The default is None.
+    side : {'both', 'negative', 'positive'}, default 'both'
+        Side of ``loc`` on which to draw the categorical offsets. ``'both'``
+        leaves the sampled offsets unchanged, while the one-sided modes fold
+        them around ``loc``.
 
     *plot_kw :
         Other keyword arguments to be passed to the plotting function.
@@ -100,6 +106,11 @@ def postaplot_engine(
     """
     
     assert orientation in ('horizontal', 'vertical')
+    if side not in ('both', 'negative', 'positive'):
+        raise ValueError(
+            "side must be 'both', 'negative', or 'positive'; "
+            f"got {side!r}."
+        )
 
     series = np.asarray(series)
     y = series[~np.isnan(series)]
@@ -118,6 +129,11 @@ def postaplot_engine(
     sampler = get_sampler(width_distr, rng)
     scale = choose_default_scale(width_distr, scale)
     category_jittered, series_value = sampler(loc, width_fun(y) * scale, size=len(y)), y
+
+    if side == 'negative':
+        category_jittered = loc - np.abs(category_jittered - loc)
+    elif side == 'positive':
+        category_jittered = loc + np.abs(category_jittered - loc)
     
     # choose orientation
     if orientation == 'horizontal':
@@ -260,6 +276,7 @@ def postaplot(
     order: Optional[Sequence] = None,
     hue_order: Optional[Sequence] = None,
     dodge: Optional[Union[bool, float]] = False,
+    split: bool = False,
     orient: Optional[str] = None,
     color: Optional[Union[str, tuple]] = None,
     palette: Optional[Union[str, Mapping, Sequence, Colormap]] = None,
@@ -298,6 +315,10 @@ def postaplot(
     dodge : bool or float, default False
         If True and hue is given, dodge hue groups at each category. If float,
         use that as the total width to dodge across (default 0.6).
+    split : bool, default False
+        If True, draw exactly two discrete hue levels on opposite sides of
+        each category. The first hue level is placed on the negative side and
+        the second on the positive side.
     orient : {"x","y"} or None
         Orientation (categorical on `x` or on `y`). If None, inferred.
     color : color-like, optional
@@ -384,8 +405,28 @@ def postaplot(
     cats_unique = [c for c in cats_unique if np.any(cat == c)]
 
     # Hue levels & palette
+    hue_for_mapping = hue_vals
+    if split and hue_vals is not None:
+        plotted = np.isin(cat, cats_unique)
+        hue_for_mapping = hue_vals[plotted]
     is_continuous_hue, hue_levels, pal_map, cmap, norm = _resolve_hue_mapping(
-        hue_vals, hue_order, palette, hue_norm)
+        hue_for_mapping, hue_order, palette, hue_norm)
+
+    # Split validation must happen before any artists are drawn.
+    if split:
+        if hue_vals is None:
+            raise ValueError("split=True requires a discrete hue variable.")
+        if is_continuous_hue:
+            raise ValueError("split=True does not support continuous hue.")
+        if len(hue_levels) != 2:
+            raise ValueError(
+                "split=True requires exactly two resolved hue levels; "
+                f"got {len(hue_levels)}."
+            )
+        if dodge:
+            raise ValueError("split=True cannot be combined with dodge.")
+        if box:
+            raise ValueError("split=True cannot be combined with box=True.")
 
     # Category baseline integer positions
     cat_to_pos = {c: i for i, c in enumerate(cats_unique)}
@@ -422,6 +463,18 @@ def postaplot(
             box_dict = plot_box(draw_box=box, loc=pos, series=val[m_cat], **box_kwa)
             drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
             continue # to avoid nesting below
+
+        if split:
+            for side, h in zip(('negative', 'positive'), hue_levels):
+                m = m_cat & (hue_vals == h)
+                if not np.any(m):
+                    continue
+                cloud = postaplot_engine(
+                    loc=pos, series=val[m], side=side,
+                    **kde_kwa, color=pal_map.get(h, color), **plot_kwa
+                )
+                drawn_any = _record_drawn(clouds, cloud, boxes, None) or drawn_any
+            continue
 
         if not dodge:
             # One cloud per category; per-point colors from hue
