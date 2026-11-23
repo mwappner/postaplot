@@ -12,8 +12,8 @@ def test_build_discrete_legend_handles_hollow():
 def test_add_continuous_colorbar_creates_cbar_axes():
     fig, ax = plt.subplots()
     # simple fake cmap/norm
-    from matplotlib import cm, colors
-    cmap = cm.get_cmap("viridis")
+    from matplotlib import colormaps, colors
+    cmap = colormaps["viridis"]
     norm = colors.Normalize(0, 1)
     cbar = add_continuous_colorbar(ax, cmap, norm, label="hue")
     assert cbar.ax.get_ylabel() == "hue"
