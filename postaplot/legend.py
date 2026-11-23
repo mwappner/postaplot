@@ -109,7 +109,7 @@ def add_legend_or_colorbar(
 
     # Decide if markers are hollow for legend appearance
     # Prefer the already-aliased kwargs if you expose them;
-    # otherwise infer from user kwargs passed to kde_scatter:
+    # otherwise infer from user kwargs passed to postaplot():
     hollow_flag = False
     if plot_kw.get("hollow", False):
         hollow_flag = True

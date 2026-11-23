@@ -96,8 +96,8 @@ def postaplot_engine(
         vector images, if the iamge has too many points, editing the resulting 
         file cna be hard. In such cases, it may be better to rasterize the 
         scatter plot and make sure to save it with a high dpi. If rasterized is
-        None, then the plot will be rasterized when there are more than 100 
-        points in the dataset. The default is None.
+        None, then the plot will be rasterized when there are more than 100
+        points in the cloud. The default is None.
     width_distr : 'normal' or 'uniform', optional
         Decides the distribution from which to choose the horizontal offset of
         each point in the cloud. The default is 'normal'.
@@ -105,13 +105,13 @@ def postaplot_engine(
         Decides if the scatter plot extends horizontally or vertically, similar
         to the `vert` argument in matplotlib.pyplot.boxplot. Default is
         'vertical'.
-    width_method : 'kde' or 'histogram', optional
-        Method to use to estimate the width of the cloud at each point. The default 
-        is 'kde'.
+    width_method : {'kde', 'histogram'}, default 'kde'
+        Method used to estimate the width of the cloud at each point.
     width_fun_args : dict, optional
-        Additional arguments to be passed to the width function. For 'kde', these
-        are passed to scipy.stats.gaussian_kde. For 'histogram', these are passed
-        to numpy.histogram. The default is {}.
+        Additional arguments passed to ``scipy.stats.gaussian_kde`` when
+        ``width_method='kde'`` or ``numpy.histogram`` when
+        ``width_method='histogram'``. For example, use
+        ``width_fun_args={"bw_method": 0.3}`` to set the KDE bandwidth.
     rng : np.random.Generator or None, optional
         A numpy random number generator to use. If None, a new default generator
         will be created. Use this to set the random seed for reproducibility. 
@@ -121,12 +121,13 @@ def postaplot_engine(
         leaves the sampled offsets unchanged, while the one-sided modes fold
         them around ``loc``.
 
-    *plot_kw :
+    **plot_kw :
         Other keyword arguments to be passed to the plotting function.
 
     Returns
     -------
-    None.
+    matplotlib.collections.PathCollection
+        The scatter collection containing the cloud.
 
     """
     
@@ -409,19 +410,24 @@ def postaplot(
         With normal jitter, this width is nominal and points can extend
         beyond their allotted space.
     gap : float in [0, 1), default 0
-        Shrink on the categorical axis by this factor to add a gap between
-        dodged elements. Must be in the range [0, 1).
+        Fraction of the available width removed from each dodged or split
+        cloud.
     horizontal_scale : float, optional
         Deprecated jitter scale. Use `width` for new code. It cannot be
         specified together with `width`.
     width_distr : {"normal","uniform"}, default "normal"
         Stochastic law for lateral offsets.
-    bw_method : see scipy.stats.gaussian_kde
-        Bandwidth selection for KDE.
+    width_method : {'kde', 'histogram'}, default 'kde'
+        Method used to estimate the width of the cloud at each point.
+    width_fun_args : dict, optional
+        Additional arguments passed to ``scipy.stats.gaussian_kde`` when
+        ``width_method='kde'`` or ``numpy.histogram`` when
+        ``width_method='histogram'``. For example, use
+        ``width_fun_args={"bw_method": 0.3}`` to set the KDE bandwidth.
     seed : int, optional
-        For reproducible jitter. Intrnally creates a np.random.Generator.
+        For reproducible jitter. Internally creates a np.random.Generator.
     rasterized : bool or None
-        If None, rasterize only for large n (>=100 points in a subset).
+        If None, rasterize clouds with more than 100 points.
     alpha : float, default 0.4
         Marker transparency.
     hollow : bool, default False
@@ -432,15 +438,16 @@ def postaplot(
     box : bool, default False
         If True, overlay a boxplot on each category (or category/hue group).
     box_kwa : dict, optional
-        Passed to `draw_box` to control boxplot appearance. By default, sets
-        empty box face and black lines. See `draw_box` docstring.
-    **plot_kw :
+        Keyword arguments passed to ``plot_box()`` to customize the boxplots.
+    **plot_kwa :
         Passed to the underlying matplotlib plotting call (e.g., marker=".",
         markersize=..., linewidth=..., etc.).
 
     Returns
     -------
-    ax : matplotlib Axes
+    list
+        Scatter collections followed by boxplot artist dictionaries when
+        boxplots are drawn. Returns an empty list when nothing is drawn.
     """
     if split_side not in ('negative', 'positive'):
         raise ValueError(
