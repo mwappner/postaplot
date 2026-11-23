@@ -378,8 +378,9 @@ def postaplot(
         Direction of the first half cloud. 'negative' puts it on the left
         in vertical plots or below in horizontal plots. 'positive' puts it
         on the right or above.
-    orient : {"x","y"} or None
-        Orientation (categorical on `x` or on `y`). If None, inferred.
+    orient : {"x", "y", "v", "h"} or None
+        Axis containing the categories. `"x"` and `"v"` put categories on
+        x; `"y"` and `"h"` put categories on y. If None, inferred.
     color : color-like, optional
         Single color if `hue` is None.
     palette : name, list, or dict, optional

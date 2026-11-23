@@ -78,9 +78,9 @@ def _infer_orient(x_vals, y_vals, orient):
         orient = orient.lower()
         # alias 'h'/'v' into 'x'/'y'
         if orient == 'h':
-            orient = 'x'
-        elif orient == 'v':
             orient = 'y'
+        elif orient == 'v':
+            orient = 'x'
         # validate
         if orient not in ("x", "y"):
             raise ValueError("orient must be 'h', 'v', 'x', 'y', or None")

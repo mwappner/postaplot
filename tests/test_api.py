@@ -15,6 +15,77 @@ def _split_df():
     })
 
 
+@pytest.mark.parametrize("alias, canonical", [("v", "x"), ("h", "y")])
+@pytest.mark.parametrize("split_box", [False, True])
+def test_orient_alias_matches_canonical(alias, canonical, split_box):
+    df = pd.DataFrame({
+        "category": ["A", "A", "A", "A", "B", "B", "B", "B"],
+        "value": [1., 2., 3., 4., 5., 6., 7., 8.],
+        "hue": ["u", "u", "v", "v", "u", "u", "v", "v"],
+    })
+    x, y = (
+        ("category", "value") if canonical == "x"
+        else ("value", "category")
+    )
+    hue = "hue" if split_box else None
+    fig, (ax_alias, ax_canonical) = plt.subplots(1, 2)
+    alias_artists = postaplot(
+        df, x=x, y=y, hue=hue, orient=alias,
+        split=split_box, box=split_box, seed=28, ax=ax_alias,
+    )
+    canonical_artists = postaplot(
+        df, x=x, y=y, hue=hue, orient=canonical,
+        split=split_box, box=split_box, seed=28, ax=ax_canonical,
+    )
+
+    n_clouds = 4 if split_box else 2
+    assert len(alias_artists) == len(canonical_artists)
+    for alias_cloud, canonical_cloud in zip(
+        alias_artists[:n_clouds], canonical_artists[:n_clouds]
+    ):
+        assert np.array_equal(
+            alias_cloud.get_offsets(), canonical_cloud.get_offsets()
+        )
+
+    if split_box:
+        for alias_box, canonical_box in zip(
+            alias_artists[n_clouds:], canonical_artists[n_clouds:]
+        ):
+            assert np.array_equal(
+                alias_box["boxes"][0].get_path().vertices,
+                canonical_box["boxes"][0].get_path().vertices,
+            )
+            for key in ("medians", "whiskers", "caps"):
+                for alias_line, canonical_line in zip(
+                    alias_box[key], canonical_box[key]
+                ):
+                    assert np.array_equal(
+                        alias_line.get_xydata(), canonical_line.get_xydata()
+                    )
+
+    alias_ticks = (
+        ax_alias.get_xticklabels() if canonical == "x"
+        else ax_alias.get_yticklabels()
+    )
+    canonical_ticks = (
+        ax_canonical.get_xticklabels() if canonical == "x"
+        else ax_canonical.get_yticklabels()
+    )
+    assert [tick.get_text() for tick in alias_ticks] == ["A", "B"]
+    assert [tick.get_text() for tick in canonical_ticks] == ["A", "B"]
+
+
+def test_invalid_orient_draws_no_artists():
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match="orient must be"):
+        postaplot(
+            x=["A", "A"], y=[1., 2.], orient="diagonal", ax=ax
+        )
+    assert not ax.collections
+    assert not ax.lines
+    assert not ax.patches
+
+
 @pytest.mark.parametrize("orient", ["x", "y"])
 @pytest.mark.parametrize("side, sign", [("negative", -1), ("positive", 1)])
 @pytest.mark.parametrize("with_hue", [False, True])
