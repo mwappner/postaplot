@@ -291,8 +291,8 @@ def postaplot_columns(data, scale=None, ax=None, alpha=0.4, rasterized=None, ori
     an itnerable where each element is a dataset, a dictionary or a pandas
     DataFrame. This function will repeatedly call postaplot for each element
     in the iterable, column in the dataframe or entry in the dictionary. In the 
-    latter two cases the function will also rename the horizontal axis to 
-    reflect the category names in the DataFrame or dictionary.
+    latter two cases the function will also label the categorical axis with
+    the category names from the DataFrame or dictionary.
 
     See postaplot_engine for a description of the other parameters.
     """
@@ -311,12 +311,25 @@ def postaplot_columns(data, scale=None, ax=None, alpha=0.4, rasterized=None, ori
         ax = plt.gca()
     
     for i, x in enumerate(values):
-        postaplot_engine(i, x, scale, ax, alpha, rasterized, orientation, **kw) # type: ignore
+        postaplot_engine(
+            loc=i,
+            series=x,
+            scale=scale,
+            ax=ax,
+            alpha=alpha,
+            rasterized=rasterized,
+            orientation=orientation,
+            **kw,
+        )
         
     if names is not None:
         positions = list(range(len(values)))
-        ax.set_xticks(positions)
-        ax.set_xticklabels(names)
+        if orientation == 'horizontal':
+            ax.set_yticks(positions)
+            ax.set_yticklabels(names)
+        else:
+            ax.set_xticks(positions)
+            ax.set_xticklabels(names)
 
 def postaplot(
     data=None,

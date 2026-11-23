@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import pytest
 
-from postaplot import postaplot  # public API
+from postaplot import postaplot, postaplot_columns  # public API
 
 
 def _split_df():
@@ -13,6 +13,43 @@ def _split_df():
         "value": [1., 2., 3., 4., 5., 6., 7., 8., 9.],
         "hue": ["left", "left", "right", "right", "left", "right", "right", "right", "right"],
     })
+
+
+def test_columns_dataframe_default_vertical_orientation():
+    df = pd.DataFrame({
+        "first": [1., 2., 3.],
+        "second": [4., 5., 6.],
+    })
+    fig, ax = plt.subplots()
+    postaplot_columns(df, ax=ax, rng=np.random.default_rng(29))
+
+    assert len(ax.collections) == 2
+    assert np.array_equal(ax.get_xticks(), [0, 1])
+    assert [tick.get_text() for tick in ax.get_xticklabels()] == [
+        "first", "second"
+    ]
+    for collection, values in zip(ax.collections, df.values.T):
+        assert np.array_equal(collection.get_offsets()[:, 1], values)
+
+
+def test_columns_dataframe_horizontal_orientation_forwards_width_distribution():
+    df = pd.DataFrame({
+        "first": [1., 2., 3.],
+        "second": [4., 5., 6.],
+    })
+    fig, ax = plt.subplots()
+    postaplot_columns(
+        df, ax=ax, orientation="horizontal", width_distr="uniform",
+        rng=np.random.default_rng(30),
+    )
+
+    assert len(ax.collections) == 2
+    assert np.array_equal(ax.get_yticks(), [0, 1])
+    assert [tick.get_text() for tick in ax.get_yticklabels()] == [
+        "first", "second"
+    ]
+    for collection, values in zip(ax.collections, df.values.T):
+        assert np.array_equal(collection.get_offsets()[:, 0], values)
 
 
 @pytest.mark.parametrize("alias, canonical", [("v", "x"), ("h", "y")])
