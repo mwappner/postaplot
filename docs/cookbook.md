@@ -47,13 +47,19 @@ fig, axs = plt.subplots(1, 2, figsize=(8,4))
 postaplot.postaplot(df, x="group", y="y", ax=axs[0], width_distr="normal", seed=1)
 axs[0].set_title("Default width")
 
-postaplot.postaplot(df, x="group", y="y", ax=axs[1], width_distr="uniform", seed=1, horizontal_scale=0.05)
+postaplot.postaplot(df, x="group", y="y", ax=axs[1], width_distr="uniform", seed=1, width=0.05)
 axs[1].set_title("Custom width")
 ```
 
 ![alt text](figures/jitter_width.png)
 
-For normal jitter, the cloud appears around 4×`horizontal_scale`.
+`width` sets the total nominal category span. Normal jitter can extend beyond
+that span because its tails are unbounded.
+
+`horizontal_scale` is deprecated. For an unsplit, undodged plot, a normal
+jitter scale can be migrated with `width=4 * horizontal_scale`; for uniform
+jitter, use `width=horizontal_scale`. Split and dodged plots should set the
+desired total category span directly with `width`.
 
 ---
 
@@ -89,7 +95,7 @@ postaplot.postaplot(df, x="group", y="y", hue="hue", ax=axs[0], width_distr="nor
 hue_order=['v', 'u'], palette={'u':'r', 'v':'g'})
 axs[0].set_title("Ordered hues, mapping palette")
 
-postaplot.postaplot(df, x="group", y="y", hue="hue_num", ax=axs[1], width_distr="uniform", seed=1, horizontal_scale=0.05, hue_norm=colors.CenteredNorm(vcenter=0.5), palette='coolwarm')
+postaplot.postaplot(df, x="group", y="y", hue="hue_num", ax=axs[1], width_distr="uniform", seed=1, width=0.05, hue_norm=colors.CenteredNorm(vcenter=0.5), palette='coolwarm')
 axs[1].set_title("Center-normalized hues")
 ```
 

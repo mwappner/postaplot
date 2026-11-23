@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import warnings
 
+from numbers import Real
 from typing import Literal, Optional, Sequence, Mapping, Union, Callable
 from matplotlib.axes import Axes
 from matplotlib.colors import Normalize, Colormap
@@ -11,8 +13,28 @@ from .core import _resolve_variable, _infer_orient, get_sampler, choose_default_
 from .styling import _resolve_hue_mapping, choose_color_plotting_mode, _alias_scatter_kwargs, _set_box_default_and_aliases
 from .legend import add_legend_or_colorbar
 
-_SPLIT_BOX_WIDTH = 0.12
-_SPLIT_BOX_GAP = 0.04
+_DEFAULT_BOX_WIDTH = 0.4
+_SPLIT_BOX_WIDTH = 0.6 * _DEFAULT_BOX_WIDTH
+_SPLIT_BOX_GAP = 0.08
+
+
+class _DefaultWidth:
+    def __repr__(self):
+        return '0.4'
+
+
+_DEFAULT_WIDTH = _DefaultWidth()
+
+
+def _scale_for_span(width_distr, span, half=False):
+    """Convert a nominal categorical span to the sampler's scale."""
+    if width_distr == 'uniform':
+        scale = span
+    elif width_distr == 'normal':
+        scale = span / 4
+    else:
+        raise ValueError(f"Unknown width_distr: {width_distr}")
+    return scale * 2 if half else scale
 
 def postaplot_engine(
     loc: Union[float, int, np.integer, np.floating],
@@ -177,7 +199,7 @@ def plot_box(
     values different from matplotlib.pyplot.boxplot defaults are:
         - showfliers=False
         - manage_ticks=False
-        - widths=0.2
+        - widths=0.4
         - patch_artist=True
         - boxprops = dict(facecolor=(0,0,0,0))
 
@@ -223,7 +245,7 @@ def plot_box(
     default_props = dict(
         showfliers=False,
         manage_ticks=False,
-        widths=0.2,
+        widths=_DEFAULT_BOX_WIDTH,
         patch_artist=True,
         boxprops = dict(facecolor=(0,0,0,0))
     )
@@ -304,7 +326,7 @@ def postaplot(
     hue: Optional[Union[str, Sequence]] = None,
     order: Optional[Sequence] = None,
     hue_order: Optional[Sequence] = None,
-    dodge: Optional[Union[bool, float]] = False,
+    dodge: bool = False,
     split: bool = False,
     split_side: Literal['negative', 'positive'] = 'negative',
     orient: Optional[str] = None,
@@ -312,9 +334,11 @@ def postaplot(
     palette: Optional[Union[str, Mapping, Sequence, Colormap]] = None,
     ax: Optional[Axes] = None,
     hue_norm: Optional[Union[tuple, Normalize]] = None,  # (vmin, vmax) for continuous hue; None = auto
+    width: float = _DEFAULT_WIDTH,
+    gap: float = 0,
     # above are standard seaborn-like parameters
     # extras specific to this plot type:
-    horizontal_scale: Optional[float] = None,  # was `scale` in the engine
+    horizontal_scale: Optional[float] = None,
     width_distr: str = "normal",
     width_method: Literal['kde', 'histogram'] = 'kde',
     width_fun_args: dict = {},
@@ -342,9 +366,9 @@ def postaplot(
         Semantic grouping. When provided, colors are mapped by `palette`.
     order, hue_order : sequences, optional
         Explicit order of categories and hue levels.
-    dodge : bool or float, default False
-        If True and hue is given, dodge hue groups at each category. If float,
-        use that as the total width to dodge across (default 0.6).
+    dodge : bool, default False
+        If True, assign discrete hue levels to separate slots. Split plots
+        already use slots, so `dodge=True` is redundant in that mode.
     split : bool, default False
         If True, draw one-sided clouds. With no hue or a single hue level,
         draw one half cloud per category. With two hue levels, draw the two
@@ -366,9 +390,16 @@ def postaplot(
         If None, use min/max of the data.
     ax : matplotlib Axes, optional
         Target axes (defaults to current axes).
+    width : float, default 0.4
+        Total width allotted to each category, in category-axis units.
+        With normal jitter, this width is nominal and points can extend
+        beyond their allotted space.
+    gap : float in [0, 1), default 0
+        Shrink on the categorical axis by this factor to add a gap between
+        dodged elements. Must be in the range [0, 1).
     horizontal_scale : float, optional
-        Lateral jitter scaling. If None, defaults depend on `width_distr`
-        (0.1 for "normal", 0.4 for "uniform") to match engine behavior.
+        Deprecated jitter scale. Use `width` for new code. It cannot be
+        specified together with `width`.
     width_distr : {"normal","uniform"}, default "normal"
         Stochastic law for lateral offsets.
     bw_method : see scipy.stats.gaussian_kde
@@ -402,6 +433,53 @@ def postaplot(
             "split_side must be 'negative' or 'positive'; "
             f"got {split_side!r}."
         )
+    if not isinstance(dodge, (bool, np.bool_)):
+        raise ValueError(
+            "dodge must be a boolean; use width to set the total slot span."
+        )
+    width_was_set = width is not _DEFAULT_WIDTH
+    if width_was_set and horizontal_scale is not None:
+        raise ValueError("width and horizontal_scale cannot be specified together.")
+    resolved_width = 0.4 if not width_was_set else width
+    if not isinstance(resolved_width, Real) or isinstance(width, (bool, np.bool_)):
+        raise ValueError("width must be a positive finite number.")
+    resolved_width = float(resolved_width)
+    if not np.isfinite(resolved_width) or resolved_width <= 0:
+        raise ValueError("width must be a positive finite number.")
+    if not isinstance(gap, Real) or isinstance(gap, (bool, np.bool_)):
+        raise ValueError("gap must be a finite number in [0, 1).")
+    gap = float(gap)
+    if not np.isfinite(gap) or not 0 <= gap < 1:
+        raise ValueError("gap must be a finite number in [0, 1).")
+
+    legacy_scale = horizontal_scale is not None
+    if legacy_scale:
+        if not isinstance(horizontal_scale, Real) or isinstance(
+            horizontal_scale, (bool, np.bool_)
+        ):
+            raise ValueError(
+                "horizontal_scale must be a finite non-negative number."
+            )
+        horizontal_scale = float(horizontal_scale)
+        if not np.isfinite(horizontal_scale) or horizontal_scale < 0:
+            raise ValueError("horizontal_scale must be a finite non-negative number.")
+        if not split and not dodge:
+            suggested_width = (
+                4 * horizontal_scale if width_distr == 'normal'
+                else horizontal_scale
+            )
+            message = (
+                "horizontal_scale is deprecated. For an unsplit, undodged "
+                f"plot, use width={suggested_width:g} to keep the same jitter "
+                "scale. For split or dodged plots, use width to set the total "
+                "span allotted to the category."
+            )
+        else:
+            message = (
+                "horizontal_scale is deprecated. For split or dodged plots, "
+                "use width to set the total span allotted to the category."
+            )
+        warnings.warn(message, FutureWarning, stacklevel=2)
 
     # Resolve ax
     if ax is None:
@@ -457,8 +535,6 @@ def postaplot(
     if split:
         if is_continuous_hue:
             raise ValueError("split=True does not support continuous hue.")
-        if dodge:
-            raise ValueError("split=True cannot be combined with dodge.")
 
     # Category baseline integer positions
     cat_to_pos = {c: i for i, c in enumerate(cats_unique)}
@@ -467,7 +543,11 @@ def postaplot(
     rng = np.random.default_rng(seed)
 
     # prepare arguments
-    kde_kwa = dict(scale=horizontal_scale, ax=ax, alpha=alpha,
+    full_scale = (
+        horizontal_scale
+        if legacy_scale else _scale_for_span(width_distr, resolved_width)
+    )
+    kde_kwa = dict(scale=full_scale, ax=ax, alpha=alpha,
                 rasterized=rasterized, hollow=hollow, width_distr=width_distr,
                 orientation=orientation, rng=rng, width_method=width_method,
                 width_fun_args=width_fun_args)
@@ -475,16 +555,35 @@ def postaplot(
     box_kwa = dict(ax=ax, orientation=orientation, **box_kwa)
     split_box_offset = None
     split_count = max(1, len(hue_levels))
-    split_scale_factor = 1 if split_count == 1 else 2 / split_count
-    if split and box:
-        split_box_width = box_kwa.get(
-            'widths', _SPLIT_BOX_WIDTH * split_scale_factor
+    if legacy_scale:
+        split_scale_factor = 1 if split_count == 1 else 2 / split_count
+        split_slot_width = 0.4 / split_count
+        split_usable_width = split_slot_width * (1 - gap)
+        split_scale = horizontal_scale * split_scale_factor * (1 - gap)
+        split_box_factor = split_scale_factor * (1 - gap)
+    else:
+        split_slot_width = (
+            resolved_width / 2 if split_count <= 2
+            else resolved_width / split_count
         )
+        split_usable_width = split_slot_width * (1 - gap)
+        split_scale = _scale_for_span(
+            width_distr, split_usable_width, half=True
+        )
+        split_box_factor = split_slot_width / 0.4 * (1 - gap)
+    if split and box:
+        if 'widths' in box_kwa:
+            split_box_width = np.asarray(box_kwa['widths']) * (1 - gap)
+        else:
+            split_box_width = _SPLIT_BOX_WIDTH * split_box_factor
         box_kwa['widths'] = split_box_width
-        width = float(np.asarray(split_box_width).reshape(-1)[0])
-        split_box_offset = (
-            abs(width) + _SPLIT_BOX_GAP * split_scale_factor
-        ) / 2
+        if 'capwidths' in box_kwa:
+            box_kwa['capwidths'] = (
+                np.asarray(box_kwa['capwidths']) * (1 - gap)
+            )
+        box_width_value = float(np.asarray(split_box_width).reshape(-1)[0])
+        split_box_clearance = _SPLIT_BOX_GAP * split_box_factor / 2
+        split_box_offset = abs(box_width_value) / 2 + split_box_clearance
 
     # Loop categories (and hues) → call engine
     drawn_any = False
@@ -499,37 +598,52 @@ def postaplot(
                 'positive' if split_side == 'negative' else 'negative'
             )
             if hue_vals is None:
-                split_groups = [(split_side, pos, m_cat, color)]
+                if legacy_scale:
+                    anchor = pos
+                else:
+                    inset = (split_slot_width - split_usable_width) / 2
+                    anchor = pos + (-inset if split_side == 'negative' else inset)
+                split_groups = [(split_side, anchor, m_cat, color)]
             elif split_count == 1:
                 h = hue_levels[0]
+                if legacy_scale:
+                    anchor = pos
+                else:
+                    inset = (split_slot_width - split_usable_width) / 2
+                    anchor = pos + (-inset if split_side == 'negative' else inset)
                 split_groups = [(
-                    split_side, pos, m_cat & (hue_vals == h),
+                    split_side, anchor, m_cat & (hue_vals == h),
                     pal_map.get(h, color),
                 )]
             elif split_count == 2:
+                sides = (split_side, opposite_side)
+                if legacy_scale:
+                    anchors = (pos, pos)
+                else:
+                    inset = (split_slot_width - split_usable_width) / 2
+                    anchors = tuple(
+                        pos + (-inset if side == 'negative' else inset)
+                        for side in sides
+                    )
                 split_groups = [
-                    (
-                        side, pos, m_cat & (hue_vals == h),
-                        pal_map.get(h, color),
-                    )
-                    for side, h in zip(
-                        (split_side, opposite_side), hue_levels
-                    )
+                    (side, anchor, m_cat & (hue_vals == h), pal_map.get(h, color))
+                    for side, anchor, h in zip(sides, anchors, hue_levels)
                 ]
             else:
                 sides = [
                     split_side if i % 2 == 0 else opposite_side
                     for i in range(split_count)
                 ]
-                # The default bounded cloud spans 0.4 category units. Split
-                # that span into fixed slots, anchoring each half at the edge
-                # from which its one-sided jitter extends into the slot.
-                slot_edges = pos + np.linspace(-0.2, 0.2, split_count + 1)
+                total_width = 0.4 if legacy_scale else resolved_width
+                slot_edges = pos + np.linspace(
+                    -total_width / 2, total_width / 2, split_count + 1
+                )
+                inset = (split_slot_width - split_usable_width) / 2
                 split_groups = [
                     (
                         side,
-                        slot_edges[i + 1] if side == 'negative'
-                        else slot_edges[i],
+                        slot_edges[i + 1] - inset if side == 'negative'
+                        else slot_edges[i] + inset,
                         m_cat & (hue_vals == h),
                         pal_map.get(h, color),
                     )
@@ -540,12 +654,7 @@ def postaplot(
                 if not np.any(m):
                     continue
                 color_kw = {} if group_color is None else {'color': group_color}
-                split_kde_kwa = dict(
-                    kde_kwa,
-                    scale=choose_default_scale(
-                        width_distr, horizontal_scale
-                    ) * split_scale_factor,
-                )
+                split_kde_kwa = dict(kde_kwa, scale=split_scale)
                 cloud = postaplot_engine(
                     loc=anchor, series=val[m], side=side,
                     **split_kde_kwa, **color_kw, **plot_kwa
@@ -604,13 +713,41 @@ def postaplot(
 
             else:
                 # discrete hue + dodge=True → draw one cloud per hue level, dodged
-                offsets = _dodge_offsets(len(hue_levels), dodge) 
+                n_levels = len(hue_levels)
+                if legacy_scale:
+                    offsets = _dodge_offsets(n_levels, True)
+                    dodge_scale = horizontal_scale * (1 - gap)
+                    default_box_width = _DEFAULT_BOX_WIDTH * (1 - gap)
+                else:
+                    slot_width = resolved_width / n_levels
+                    offsets = [
+                        (i + 0.5) * slot_width - resolved_width / 2
+                        for i in range(n_levels)
+                    ]
+                    usable_width = slot_width * (1 - gap)
+                    dodge_scale = _scale_for_span(width_distr, usable_width)
+                    default_box_width = (
+                        _DEFAULT_BOX_WIDTH * slot_width / 0.8 * (1 - gap)
+                    )
+                dodge_kde_kwa = dict(kde_kwa, scale=dodge_scale)
+                dodge_box_kwa = dict(box_kwa)
+                if 'widths' in dodge_box_kwa:
+                    dodge_box_kwa['widths'] = (
+                        np.asarray(dodge_box_kwa['widths']) * (1 - gap)
+                    )
+                else:
+                    dodge_box_kwa['widths'] = default_box_width
+                if 'capwidths' in dodge_box_kwa:
+                    dodge_box_kwa['capwidths'] = (
+                        np.asarray(dodge_box_kwa['capwidths']) * (1 - gap)
+                    )
+
                 for off, h in zip(offsets, hue_levels):
                     m = m_cat & (hue_vals == h)
                     if not np.any(m): continue
                     cloud = postaplot_engine(loc=pos + off, series=val[m],
-                                                **kde_kwa, color=pal_map.get(h, color), **plot_kwa)
-                    box_dict = plot_box(draw_box=box, loc=pos + off, series=val[m], **box_kwa)
+                                                **dodge_kde_kwa, color=pal_map.get(h, color), **plot_kwa)
+                    box_dict = plot_box(draw_box=box, loc=pos + off, series=val[m], **dodge_box_kwa)
                     drawn_any = _record_drawn(clouds, cloud, boxes, box_dict) or drawn_any
 
     if not drawn_any:

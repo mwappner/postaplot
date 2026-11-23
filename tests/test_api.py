@@ -132,7 +132,6 @@ def test_split_side_mirrors_two_hues_without_reordering_them():
 
 @pytest.mark.parametrize("extra, match", [
     ({"hue": "many"}, "continuous hue"),
-    ({"hue": "two", "dodge": True}, "dodge"),
 ])
 def test_invalid_split_draws_no_artists(extra, match):
     df = pd.DataFrame({
@@ -231,9 +230,9 @@ def test_multi_hue_split_boxes_follow_slot_anchors(n_hues):
 
     boxes = artists[n_hues:]
     edges = np.linspace(-.2, .2, n_hues + 1)
-    scale_factor = 2 / n_hues
-    expected_width = .12 * scale_factor
-    expected_inset = (.12 + .04) * scale_factor / 2
+    scale_factor = 1 / n_hues
+    expected_width = .24 * scale_factor
+    expected_inset = (.24 + .08) * scale_factor / 2
     for i, box in enumerate(boxes):
         side = "negative" if i % 2 == 0 else "positive"
         sign = -1 if side == "negative" else 1
@@ -339,6 +338,8 @@ def test_split_boxes_match_subsets_and_leave_center_gap(orient):
     ]
     assert np.max(box_edges[0]) < 0 < np.min(box_edges[1])
     assert np.isclose(np.min(box_edges[1]) - np.max(box_edges[0]), .04)
+    for edge in box_edges:
+        assert np.isclose(np.max(edge) - np.min(edge), .12)
 
     value_coordinate = (
         lambda artist: artist.get_ydata()
@@ -363,6 +364,42 @@ def test_split_boxes_match_subsets_and_leave_center_gap(orient):
             assert np.allclose(value_coordinate(whisker), expected)
         for cap, endpoint in zip(box["caps"], [expected_values[0][1], expected_values[1][1]]):
             assert np.allclose(value_coordinate(cap), endpoint)
+
+
+@pytest.mark.parametrize("orient", ["x", "y"])
+@pytest.mark.parametrize("gap", [0, .25])
+@pytest.mark.parametrize("explicit_width", [False, True])
+def test_split_box_width_and_anchor_clearance(
+    orient, gap, explicit_width
+):
+    df = _split_df().query("grp == 'B'")
+    x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
+    box_kwa = {"widths": .1} if explicit_width else {}
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        df, x=x, y=y, hue="hue", split=True, box=True,
+        gap=gap, box_kwa=box_kwa, seed=27, ax=ax,
+    )
+
+    boxes = artists[2:]
+    category_index = 0 if orient == "x" else 1
+    category_coordinate = (
+        lambda artist: artist.get_xdata()
+        if orient == "x" else artist.get_ydata()
+    )
+    factor = 1 - gap
+    effective_width = (.1 if explicit_width else .12) * factor
+    clearance = .02 * factor
+    anchors = [-.1 * gap, .1 * gap]
+    for sign, anchor, box in zip([-1, 1], anchors, boxes):
+        box_axis = box["boxes"][0].get_path().vertices[:, category_index]
+        assert np.isclose(np.max(box_axis) - np.min(box_axis), effective_width)
+        inner_edge = np.max(box_axis) if sign < 0 else np.min(box_axis)
+        assert np.isclose(abs(inner_edge - anchor), clearance)
+        center = np.mean(category_coordinate(box["medians"][0]))
+        assert np.isclose(
+            center, anchor + sign * (effective_width / 2 + clearance)
+        )
 
 
 def test_split_box_hue_order_missing_hue_and_width_override():
@@ -435,6 +472,8 @@ def test_non_split_box_behavior_is_preserved():
     assert len(artists) == 6
     for pos, box in enumerate(artists[3:]):
         assert np.isclose(np.mean(box["medians"][0].get_xdata()), pos)
+        box_x = box["boxes"][0].get_path().vertices[:, 0]
+        assert np.isclose(np.max(box_x) - np.min(box_x), .4)
         for whisker in box["whiskers"]:
             assert np.allclose(whisker.get_xdata(), pos)
 
@@ -447,9 +486,11 @@ def test_dodged_box_whiskers_remain_centered():
         order=["B"], seed=17, ax=ax,
     )
     boxes = artists[2:]
-    for center, box in zip([-.15, .15], boxes):
+    for center, box in zip([-.1, .1], boxes):
         for whisker in box["whiskers"]:
             assert np.allclose(whisker.get_xdata(), center)
+        box_x = box["boxes"][0].get_path().vertices[:, 0]
+        assert np.isclose(np.max(box_x) - np.min(box_x), .1)
 
 
 def test_omitted_split_matches_false():
@@ -462,6 +503,161 @@ def test_omitted_split_matches_false():
     assert len(default) == len(explicit)
     for first, second in zip(default, explicit):
         assert np.array_equal(first.get_offsets(), second.get_offsets())
+
+
+@pytest.mark.parametrize("orient", ["x", "y"])
+@pytest.mark.parametrize("width_distr", ["normal", "uniform"])
+def test_width_scales_unsplit_jitter_and_preserves_values(orient, width_distr):
+    values = np.array([1., 2., 3., 4.])
+    x, y = ((["A"] * 4, values) if orient == "x" else (values, ["A"] * 4))
+    fig, (ax_narrow, ax_wide) = plt.subplots(1, 2)
+    narrow = postaplot(
+        x=x, y=y, orient=orient, width=.4, width_distr=width_distr,
+        width_method="histogram", seed=21, ax=ax_narrow,
+    )[0]
+    wide = postaplot(
+        x=x, y=y, orient=orient, width=.8, width_distr=width_distr,
+        width_method="histogram", seed=21, ax=ax_wide,
+    )[0]
+
+    categorical_index, value_index = ((0, 1) if orient == "x" else (1, 0))
+    assert np.allclose(
+        wide.get_offsets()[:, categorical_index],
+        2 * narrow.get_offsets()[:, categorical_index],
+    )
+    assert np.array_equal(wide.get_offsets()[:, value_index], values)
+
+
+@pytest.mark.parametrize("orient", ["x", "y"])
+def test_dodge_width_gap_slots_and_missing_level(orient):
+    df = pd.DataFrame({
+        "grp": ["A"] * 6 + ["B"] * 4,
+        "value": np.arange(10, dtype=float),
+        "hue": ["u", "u", "v", "v", "w", "w",
+                "u", "u", "w", "w"],
+    })
+    x, y = (("grp", "value") if orient == "x" else ("value", "grp"))
+    fig, ax = plt.subplots()
+    clouds = postaplot(
+        df, x=x, y=y, hue="hue", dodge=True, width=.6, gap=.25,
+        width_distr="uniform", width_method="histogram", seed=22, ax=ax,
+    )
+
+    categorical_index = 0 if orient == "x" else 1
+    centers = [-.2, 0., .2, .8, 1.2]
+    assert len(clouds) == len(centers)
+    for cloud, center in zip(clouds, centers):
+        offsets = cloud.get_offsets()[:, categorical_index]
+        assert np.all(offsets >= center - .075)
+        assert np.all(offsets <= center + .075)
+
+
+@pytest.mark.parametrize("width_distr", ["normal", "uniform"])
+def test_dodge_gap_keeps_slot_centers_and_scales_jitter(width_distr):
+    df = pd.DataFrame({
+        "grp": ["A"] * 8,
+        "value": np.arange(8, dtype=float),
+        "hue": ["u"] * 4 + ["v"] * 4,
+    })
+    fig, (ax_full, ax_gap) = plt.subplots(1, 2)
+    common = dict(
+        data=df, x="grp", y="value", hue="hue", dodge=True,
+        width=.8, width_distr=width_distr,
+        width_method="histogram", seed=26,
+    )
+    full = postaplot(gap=0, ax=ax_full, **common)
+    narrowed = postaplot(gap=.5, ax=ax_gap, **common)
+    for center, first, second in zip([-.2, .2], full, narrowed):
+        assert np.allclose(
+            second.get_offsets()[:, 0] - center,
+            .5 * (first.get_offsets()[:, 0] - center),
+        )
+        assert np.array_equal(
+            second.get_offsets()[:, 1], first.get_offsets()[:, 1]
+        )
+
+
+def test_split_gap_insets_anchors_and_redundant_dodge():
+    levels = ["a", "b", "c", "d"]
+    df = pd.DataFrame({
+        "grp": ["A"] * 8,
+        "value": np.arange(8, dtype=float),
+        "hue": np.repeat(levels, 2),
+    })
+    fig, (ax_plain, ax_dodge) = plt.subplots(1, 2)
+    common = dict(
+        data=df, x="grp", y="value", hue="hue", split=True,
+        width=.8, gap=.25, width_distr="uniform",
+        width_method="histogram", seed=23,
+    )
+    plain = postaplot(ax=ax_plain, **common)
+    redundant = postaplot(ax=ax_dodge, dodge=True, **common)
+
+    usable_ranges = [(-.375, -.225), (-.175, -.025),
+                     (.025, .175), (.225, .375)]
+    for first, second, (lower, upper) in zip(plain, redundant, usable_ranges):
+        assert np.array_equal(first.get_offsets(), second.get_offsets())
+        categorical = first.get_offsets()[:, 0]
+        assert np.all(categorical >= lower)
+        assert np.all(categorical <= upper)
+
+
+def test_split_gap_scales_box_and_cap_geometry():
+    fig, ax = plt.subplots()
+    artists = postaplot(
+        x=["A"] * 5, y=[0., 1., 2., 3., 4.], split=True,
+        split_side="negative", box=True, width=.8, gap=.5,
+        box_kwa={"widths": .1, "capwidths": .08}, seed=24, ax=ax,
+    )
+    box = artists[1]
+    box_x = box["boxes"][0].get_path().vertices[:, 0]
+    assert np.isclose(np.max(box_x) - np.min(box_x), .05)
+    assert np.isclose(np.mean(box["medians"][0].get_xdata()), -.145)
+    inner_edge = np.max(box_x)
+    assert np.isclose(inner_edge, -.12)
+    for whisker in box["whiskers"]:
+        assert np.allclose(whisker.get_xdata(), inner_edge)
+    for cap in box["caps"]:
+        assert np.isclose(cap.get_xdata()[0], inner_edge)
+        assert np.isclose(cap.get_xdata()[1], inner_edge - .02)
+
+
+@pytest.mark.parametrize("width_distr, legacy, replacement", [
+    ("normal", .1, .4),
+    ("uniform", .2, .2),
+])
+def test_horizontal_scale_warns_and_suggested_width_matches(
+    width_distr, legacy, replacement
+):
+    values = [1., 2., 3., 4.]
+    fig, (ax_legacy, ax_width) = plt.subplots(1, 2)
+    with pytest.warns(FutureWarning, match=fr"width={replacement:g}"):
+        old = postaplot(
+            x=["A"] * 4, y=values, horizontal_scale=legacy,
+            width_distr=width_distr, seed=25, ax=ax_legacy,
+        )[0]
+    new = postaplot(
+        x=["A"] * 4, y=values, width=replacement,
+        width_distr=width_distr, seed=25, ax=ax_width,
+    )[0]
+    assert np.array_equal(old.get_offsets(), new.get_offsets())
+
+
+@pytest.mark.parametrize("kwargs, match", [
+    ({"width": 0}, "positive finite"),
+    ({"width": np.inf}, "positive finite"),
+    ({"gap": -0.1}, r"in \[0, 1\)"),
+    ({"gap": 1}, r"in \[0, 1\)"),
+    ({"dodge": .3}, "dodge must be a boolean"),
+    ({"width": .8, "horizontal_scale": .1}, "cannot be specified together"),
+])
+def test_invalid_width_dodge_gap_draws_no_artists(kwargs, match):
+    fig, ax = plt.subplots()
+    with pytest.raises(ValueError, match=match):
+        postaplot(x=["A", "A"], y=[1., 2.], ax=ax, **kwargs)
+    assert not ax.collections
+    assert not ax.lines
+    assert not ax.patches
 
 def _toy_df(seed=0):
     rng = np.random.default_rng(seed)
